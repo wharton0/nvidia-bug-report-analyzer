@@ -1,0 +1,28 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+nvidia-bug-report.log
+nvidia-bug-report.log(1)
+*.log
+*.gz
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib

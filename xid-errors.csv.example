@@ -1,0 +1,33 @@
+1,GPU has fallen off the bus
+2,Fifo: Puller Error
+3,Fifo: Pusher Error
+4,Fifo: DMA Pusher Error
+5,Fifo: DMA Pusher Error
+6,Fifo: Method Error
+7,Fifo: Cache Error
+8,MMU Error
+9,PBDMA Error
+10,GR: Exception
+11,GR: Global Exception
+12,GR: Class Exception
+13,Graphics Engine Exception
+14,Graphics Engine Exception
+31,GPU memory page fault
+32,Invalid memory access
+43,GPU stopped processing
+44,Graphics exception
+45,Preemptive cleanup
+48,Double Bit ECC Error
+56,Display Engine Exception
+61,Internal Micro-controller Breakpoint/Warning
+62,Internal Micro-controller Halt
+63,ECC page retirement or row remapping recording event
+64,ECC page retirement or row remapping recording failure
+68,NVDEC0 Exception
+69,Video processor exception
+74,GSP RPC Timeout
+79,GPU has fallen off the bus
+80,GPU has fallen off the bus
+94,Contained ECC error
+95,Uncontained ECC error
+119,GSP Error

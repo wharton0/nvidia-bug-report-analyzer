@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let log_content = fs::read_to_string(&args.log_file)?.replace('\r', "");
 
     println!("\n==================================================");
-    println!("     NVIDIA Bug Report Log Summary");
+    println!(" NVIDIA Bug Report Log Summary - Wharton Wang v.0.2.0");
     println!("==================================================\n");
 
     print_system_summary(&log_content);
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let nvlink_errors = check_nvlink_errors(&log_content);
     let temp_status = check_gpu_temperatures(&log_content);
     let ecc_errors = check_ecc_errors(&log_content);
-    let pcie_issues = check_pcie_link_status(&log_content);
+    let nic_pcie_issues = check_nic_pcie_status(&log_content);
     let power_status = check_gpu_power_performance(&log_content);
     
     // Simple status checks
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     print_summary_item("NVLink Errors", nvlink_errors);
     print_summary_item("GPU Temperature Issues", temp_status);
     print_summary_item("ECC Memory Errors", ecc_errors);
-    print_summary_item("PCIe Link Degradation", pcie_issues);
+    print_summary_item("NIC PCIe Issues", nic_pcie_issues);
     print_summary_item("GPU Power/Performance Issues", power_status);
     print_summary_item("Thermal Slowdown", thermal_slowdown);
     print_summary_item("Segfaults", segfaults);
@@ -436,73 +436,72 @@ fn check_ecc_errors(log: &str) -> usize {
     total_errors
 }
 
-fn check_pcie_link_status(log: &str) -> usize {
+fn check_nic_pcie_status(log: &str) -> usize {
     println!("\n==================================================");
-    println!("     PCIe Link Status Check");
+    println!("     NIC PCIe Status Check");
     println!("==================================================\n");
     
-    // Find all PCI devices with downgraded links
-    let pci_device_re = Regex::new(r"(?m)^([0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9])\s+(.+?)\[([0-9a-f]{4})\]").unwrap();
-    let lnksta_re = Regex::new(r"LnkSta:\s*Speed\s+([^\s]+)\s*(\([^)]*\))?,\s*Width\s+([^\s]+)\s*(\([^)]*\))?").unwrap();
-    let lnkcap_re = Regex::new(r"LnkCap:.*?Speed\s+([^\s,]+).*?Width\s+([^\s,]+)").unwrap();
+    // Expected NIC configurations: name -> (bus_id, expected_speed, expected_width)
+    let expected_nics: HashMap<&str, (&str, &str, &str)> = [
+        ("nic38", ("1a:00", "32.0 GT/s", "x16")),
+        ("nic40", ("1b:00", "16.0 GT/s", "x8")),
+        ("nic39", ("3c:00", "32.0 GT/s", "x16")),
+        ("nic37", ("4d:00", "32.0 GT/s", "x16")),
+        ("nic36", ("5e:00", "32.0 GT/s", "x16")),
+        ("nic32", ("9c:00", "32.0 GT/s", "x16")),
+        ("nic31", ("9d:00", "16.0 GT/s", "x16")),
+        ("nic33", ("bc:00", "32.0 GT/s", "x16")),
+        ("nic34", ("cc:00", "32.0 GT/s", "x16")),
+        ("nic35", ("dc:00", "32.0 GT/s", "x16")),
+    ].iter().cloned().collect();
     
-    let lines: Vec<&str> = log.lines().collect();
-    let mut degraded_links = Vec::new();
+    // Parse dmesg output for mlx5_core PCIe bandwidth info
+    // Format: mlx5_core 0000:1a:00.0: 504.112 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x16 link)
+    let pcie_re = Regex::new(r"mlx5_core 0000:([0-9a-f]{2}:[0-9a-f]{2}\.[0-9]).*?available PCIe bandwidth \(([\d.]+) GT/s PCIe (x\d+) link\)").unwrap();
     
-    for (i, line) in lines.iter().enumerate() {
-        if line.contains("LnkSta:") && line.contains("downgraded") {
-            // Find the PCI device address by looking backwards
-            let mut pci_addr = "Unknown";
-            let mut device_desc = "Unknown Device";
-            let mut lnkcap_info = String::new();
+    let mut found_nics: HashMap<String, (String, String)> = HashMap::new();
+    
+    for cap in pcie_re.captures_iter(log) {
+        let bus_id = cap[1].to_string();
+        let speed = cap[2].to_string();
+        let width = cap[3].to_string();
+        
+        // Match bus_id to NIC name (only first 5 chars: xx:yy)
+        let bus_short = &bus_id[..5];
+        found_nics.insert(bus_short.to_string(), (format!("{} GT/s", speed), width));
+    }
+    
+    let mut issues = Vec::new();
+    
+    // Check each expected NIC
+    for (nic_name, (expected_bus, expected_speed, expected_width)) in expected_nics.iter() {
+        if let Some((actual_speed, actual_width)) = found_nics.get(*expected_bus) {
+            // NIC found, check if speed/width matches
+            let speed_match = actual_speed == expected_speed;
+            let width_match = actual_width == expected_width;
             
-            for j in (0..i).rev().take(50) {
-                if let Some(cap) = pci_device_re.captures(lines[j]) {
-                    pci_addr = cap.get(1).unwrap().as_str();
-                    device_desc = cap.get(2).unwrap().as_str().trim();
-                    break;
-                }
-            }
-            
-            // Find LnkCap (expected capability) by looking backwards
-            for j in (0..i).rev().take(20) {
-                if let Some(cap) = lnkcap_re.captures(lines[j]) {
-                    let expected_speed = cap.get(1).unwrap().as_str();
-                    let expected_width = cap.get(2).unwrap().as_str();
-                    lnkcap_info = format!(" (Expected: {} {})", expected_speed, expected_width);
-                    break;
-                }
-            }
-            
-            // Parse current LnkSta
-            if let Some(cap) = lnksta_re.captures(line) {
-                let current_speed = cap.get(1).unwrap().as_str();
-                let speed_status = cap.get(2).map_or("", |m| m.as_str());
-                let current_width = cap.get(3).unwrap().as_str();
-                let width_status = cap.get(4).map_or("", |m| m.as_str());
-                
-                degraded_links.push(format!(
-                    "   {} - {}\n      Current: {} {}, {} {}{}",
-                    pci_addr, device_desc, current_speed, speed_status, 
-                    current_width, width_status, lnkcap_info
+            if !speed_match || !width_match {
+                issues.push(format!(
+                    "   {} ({}) - DEGRADED: {} {} (Expected: {} {})",
+                    nic_name, expected_bus, actual_speed, actual_width, expected_speed, expected_width
                 ));
             }
+        } else {
+            // NIC not found
+            issues.push(format!("   {} ({}) - MISSING", nic_name, expected_bus));
         }
     }
     
-    if !degraded_links.is_empty() {
-        println!("** PCIe Link Degradation Detected: {} instances", degraded_links.len());
-        println!("   Some PCIe links are running at reduced speed or width.");
-        println!("   This may impact GPU performance.\n");
-        println!("Degraded Links:");
-        for link in &degraded_links {
-            println!("{}", link);
-        }
+    if issues.is_empty() {
+        println!("All NICs are running at expected PCIe speeds");
     } else {
-        println!("All PCIe links appear to be running at expected speeds");
+        println!("** NIC PCIe Issues Detected: {} issue(s)\n", issues.len());
+        for issue in &issues {
+            println!("{}", issue);
+        }
     }
     
-    degraded_links.len()
+    issues.len()
 }
 
 fn check_gpu_power_performance(log: &str) -> usize {

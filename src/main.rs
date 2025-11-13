@@ -549,7 +549,8 @@ fn check_gpu_power_performance(log: &str) -> usize {
         println!("   This improves performance and reduces driver load time.");
     }
     
-    persistence_disabled
+    // Persistence Mode disabled is a recommendation, not an issue
+    0
 }
 
 fn extract_field<'a>(block: &'a str, field: &str) -> &'a str {
